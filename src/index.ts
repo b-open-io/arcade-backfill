@@ -75,10 +75,22 @@ interface Deliverable extends BlockGroup {
 const deliverables: Deliverable[] = [];
 const rootMismatch: number[] = [];
 
+const fetchHeader = async (height: number) => {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const res = await fetch(`https://api.whatsonchain.com/v1/bsv/main/block/height/${height}`);
+    if (res.ok) return (await res.json()) as { hash: string; merkleroot: string };
+    await sleep(2000 * (attempt + 1));
+  }
+  return null;
+};
+
+const headerFailed: number[] = [];
 for (const group of blocks.values()) {
-  const res = await fetch(`https://api.whatsonchain.com/v1/bsv/main/block/height/${group.height}`);
-  if (!res.ok) throw new Error(`WoC header fetch failed for height ${group.height}: ${res.status}`);
-  const header = (await res.json()) as { hash: string; merkleroot: string };
+  const header = await fetchHeader(group.height);
+  if (!header) {
+    headerFailed.push(group.height);
+    continue;
+  }
   const computed = group.path.computeRoot(group.txids[0]);
   if (computed !== header.merkleroot) {
     rootMismatch.push(group.height);
@@ -88,6 +100,7 @@ for (const group of blocks.values()) {
   await sleep(350);
 }
 if (rootMismatch.length) console.log(`ROOT MISMATCH — skipped heights: ${rootMismatch.join(", ")}`);
+if (headerFailed.length) console.log(`header fetch failed — skipped heights: ${headerFailed.join(", ")}`);
 
 if (!args.execute) {
   for (const d of deliverables) {
