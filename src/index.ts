@@ -122,6 +122,11 @@ for (const d of deliverables) {
     merkleRoot: d.merkleRoot,
     subtreeCount: 1,
     subtreeHashes: [d.merkleRoot],
+    // arcade's callbackBlockData requires a non-empty coinbaseBump before it
+    // will use ANY of the enriched fields (falling back to a datahub fetch
+    // otherwise). In the single-subtree case the coinbase path is never
+    // dereferenced, so the block's own BUMP satisfies the gate.
+    coinbaseBump: d.path.toHex(),
     expectedSubtreeIndices: [0],
   });
   console.log(`delivered block ${d.height}: ${d.txids.length} tx(s)`);
