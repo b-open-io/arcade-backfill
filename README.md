@@ -35,6 +35,6 @@ bun run src/index.ts --min-age-minutes 60 --limit 100000 \
 1. Query stuck transactions from arcade's Postgres.
 2. Fetch each txid's merkle path from JungleBus (`/v1/transaction/proof/<txid>`).
 3. Group by block, merging same-block paths into one BUMP (`MerklePath.combine`).
-4. Verify each merged path computes the block header's merkle root (header from WhatsOnChain). Mismatches are skipped and reported.
-5. Per block, POST to arcade's callback endpoint: a `STUMP` (the full-block BUMP, with the block declared single-subtree so the BUMP is the stump), then a `BLOCK_PROCESSED` naming it. Arcade builds the compound BUMP and transitions the transactions to `MINED`.
+4. Resolve each block's hash and merkle root from JungleBus (`/v1/block_header/get/<height>`).
+5. Per block, POST to arcade's callback endpoint: a `STUMP` (the full-block BUMP, with the block declared single-subtree so the BUMP is the stump), then a `BLOCK_PROCESSED` naming it. Arcade validates the compound BUMP against the merkle root before persisting, then transitions the transactions to `MINED`.
 6. Poll until the delivered set converges to `MINED`; report anything that didn't.

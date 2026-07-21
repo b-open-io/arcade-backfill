@@ -67,46 +67,33 @@ for (const tx of stuck) {
 }
 console.log(`proofs found: ${stuck.length - noProof.length} across ${blocks.size} blocks; no proof (not mined or junglebus lagging): ${noProof.length}`);
 
-// Verify each block's combined path against the block header before touching arcade.
+// Resolve each block's hash + merkle root from junglebus headers. Arcade
+// validates the compound BUMP against this root before persisting anything.
 interface Deliverable extends BlockGroup {
   blockHash: string;
   merkleRoot: string;
 }
 const deliverables: Deliverable[] = [];
-const rootMismatch: number[] = [];
-
-const fetchHeader = async (height: number) => {
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const res = await fetch(`https://api.whatsonchain.com/v1/bsv/main/block/height/${height}`);
-    if (res.ok) return (await res.json()) as { hash: string; merkleroot: string };
-    await sleep(2000 * (attempt + 1));
-  }
-  return null;
-};
-
 const headerFailed: number[] = [];
+
 for (const group of blocks.values()) {
-  const header = await fetchHeader(group.height);
-  if (!header) {
+  const res = await fetch(`${args.junglebus}/v1/block_header/get/${group.height}`);
+  if (!res.ok) {
     headerFailed.push(group.height);
+    await sleep(150);
     continue;
   }
-  const computed = group.path.computeRoot(group.txids[0]);
-  if (computed !== header.merkleroot) {
-    rootMismatch.push(group.height);
-    continue;
-  }
+  const header = (await res.json()) as { hash: string; merkleroot: string };
   deliverables.push({ ...group, blockHash: header.hash, merkleRoot: header.merkleroot });
-  await sleep(350);
+  await sleep(150);
 }
-if (rootMismatch.length) console.log(`ROOT MISMATCH — skipped heights: ${rootMismatch.join(", ")}`);
 if (headerFailed.length) console.log(`header fetch failed — skipped heights: ${headerFailed.join(", ")}`);
 
 if (!args.execute) {
   for (const d of deliverables) {
     console.log(`[dry-run] block ${d.height} (${d.blockHash}): would deliver stump covering ${d.txids.length} tx(s)`);
   }
-  console.log(`dry run complete: ${deliverables.length} blocks ready, ${rootMismatch.length} mismatched, ${noProof.length} unproven`);
+  console.log(`dry run complete: ${deliverables.length} blocks ready, ${headerFailed.length} header failures, ${noProof.length} unproven`);
   await sql.close();
   process.exit(0);
 }
@@ -159,5 +146,5 @@ if (mined < allTxids.length) {
     SELECT txid, status FROM transactions WHERE txid IN ${sql(allTxids)} AND status != 'MINED' LIMIT 20`;
   console.log("not converged:", still);
 }
-console.log(`done: ${mined}/${allTxids.length} mined, ${noProof.length} unproven skipped, ${rootMismatch.length} root-mismatch skipped`);
+console.log(`done: ${mined}/${allTxids.length} mined, ${noProof.length} unproven skipped, ${headerFailed.length} header-failure skipped`);
 await sql.close();
