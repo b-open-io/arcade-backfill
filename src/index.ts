@@ -6,6 +6,7 @@ const { values: args } = parseArgs({
   options: {
     execute: { type: "boolean", default: false },
     "min-age-minutes": { type: "string", default: "60" },
+    txids: { type: "string" },
     limit: { type: "string", default: "100000" },
     "arcade-config": { type: "string", default: `${process.env.HOME}/Code/arcade/config.yaml` },
     "arcade-url": { type: "string", default: "http://localhost:3011" },
@@ -30,13 +31,28 @@ interface StuckTx {
   created_at: Date;
 }
 
-const stuck: StuckTx[] = await sql`
-  SELECT txid, status, created_at FROM transactions
-  WHERE status IN ${sql(STATUSES)}
-    AND created_at < now() - make_interval(mins => ${Number(args["min-age-minutes"])})
-  ORDER BY created_at
-  LIMIT ${Number(args.limit)}`;
-console.log(`stuck transactions older than ${args["min-age-minutes"]}m: ${stuck.length}`);
+// --txids bypasses the stuck-status selection: deliver for these exact txs
+// regardless of status. Repairs MINED txs whose block BUMP is missing from
+// arcade's store (proofs unservable after a restart).
+let stuck: StuckTx[];
+if (args.txids) {
+  const requested = args.txids.split(",").map((t) => t.trim()).filter(Boolean);
+  stuck = await sql`
+    SELECT txid, status, created_at FROM transactions
+    WHERE txid IN ${sql(requested)}
+    ORDER BY created_at`;
+  const found = new Set(stuck.map((t) => t.txid));
+  for (const t of requested) if (!found.has(t)) console.log(`not in arcade, skipped: ${t}`);
+  console.log(`explicit txids: ${stuck.length} of ${requested.length} found`);
+} else {
+  stuck = await sql`
+    SELECT txid, status, created_at FROM transactions
+    WHERE status IN ${sql(STATUSES)}
+      AND created_at < now() - make_interval(mins => ${Number(args["min-age-minutes"])})
+    ORDER BY created_at
+    LIMIT ${Number(args.limit)}`;
+  console.log(`stuck transactions older than ${args["min-age-minutes"]}m: ${stuck.length}`);
+}
 
 // Fetch junglebus proofs, grouping mined txs by block height.
 interface BlockGroup {
@@ -94,6 +110,12 @@ if (!args.execute) {
     console.log(`[dry-run] block ${d.height} (${d.blockHash}): would deliver stump covering ${d.txids.length} tx(s)`);
   }
   console.log(`dry run complete: ${deliverables.length} blocks ready, ${headerFailed.length} header failures, ${noProof.length} unproven`);
+  await sql.close();
+  process.exit(0);
+}
+
+if (deliverables.length === 0) {
+  console.log(`nothing to deliver: ${noProof.length} unproven, ${headerFailed.length} header failures`);
   await sql.close();
   process.exit(0);
 }
